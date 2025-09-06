@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+import os
+from . import get_catalog_path
+from .core import (
+    get_pointing_center_and_frequency,
+    load_tgss_nvss_catalog,
+    filter_sources_in_fov,
+    create_wsclean_source_list,
+    create_fits_mask,
+    parse_source_types,
+)
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate WSClean source list and FITS mask from TGSS-NVSS catalog",
+        epilog="""
+Source types:
+  S (single): Point-like sources with no other detections in same island
+  M (multiple): Double-lobe radio galaxies or collections of nearby sources  
+  C (complex): Part of complex objects (e.g. one lobe of radio galaxy)
+  L (upper-limit): NVSS detection with no TGSS detection
+  U (lower-limit): TGSS detection with no NVSS detection
+  I (island): Global values of complex islands
+  
+Examples:
+  foresight obs.ms --imsize 4096 --cellsize 1.5
+  foresight obs.ms --imsize 9600 --cellsize 1.0 --source-types S,M,L
+  foresight obs.ms --imsize 8192 --cellsize 2.0 --source-types all
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("ms_file", help="Measurement Set file")
+    parser.add_argument("--imsize", type=int, required=True, help="Image size in pixels (square)")
+    parser.add_argument("--cellsize", type=float, required=True, help="Cell size in arcseconds")
+    parser.add_argument("--source-types", default="S", 
+                       help="Comma-separated list of source types to include: S,M,C,L,U,I or single,multiple,complex,upper,lower,island or 'all'")
+    parser.add_argument("-o", "--output", default="sources.txt", help="Output source list file")
+    parser.add_argument("-m", "--mask", default="source_mask.fits", help="Output FITS mask file")
+    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    
+    args = parser.parse_args()
+    
+    # Always use bundled catalog - no option to override
+    catalog_file = get_catalog_path()
+    if not os.path.exists(catalog_file):
+        print(f"Error: Bundled TGSS-NVSS catalog not found at {catalog_file}")
+        print("Package installation may be corrupted. Please reinstall foresight.")
+        sys.exit(1)
+    
+    # Parse source types
+    if args.source_types.lower() == 'all':
+        source_types = ['S', 'M', 'C', 'L', 'U', 'I']
+        print("Using all source types: S,M,C,L,U,I")
+    else:
+        source_types = parse_source_types(args.source_types)
+    
+    print(f"Reading pointing center and frequency from {args.ms_file}")
+    try:
+        ra_center, dec_center, obs_freq = get_pointing_center_and_frequency(args.ms_file)
+        print(f"Pointing center: RA={ra_center:.6f}°, DEC={dec_center:.6f}°")
+        print(f"Observation frequency: {obs_freq/1e6:.1f} MHz")
+    except Exception as e:
+        print(f"Error reading MS file: {e}")
+        sys.exit(1)
+    
+    print(f"Loading bundled TGSS-NVSS catalog")
+    try:
+        catalog = load_tgss_nvss_catalog(catalog_file)
+        print(f"Loaded {len(catalog)} sources from catalog")
+    except Exception as e:
+        print(f"Error loading catalog: {e}")
+        sys.exit(1)
+    
+    print(f"Filtering sources within image FOV (imsize={args.imsize}, cellsize={args.cellsize} arcsec)")
+    filtered_sources = filter_sources_in_fov(catalog, ra_center, dec_center, args.imsize, args.cellsize, source_types, debug=args.debug)
+    print(f"Found {len(filtered_sources)} sources in image FOV")
+    
+    if len(filtered_sources) == 0:
+        print("No sources found in image FOV!")
+        sys.exit(1)
+    
+    print(f"Creating WSClean source list: {args.output}")
+    source_count = create_wsclean_source_list(filtered_sources, obs_freq, args.output)
+    
+    print(f"Creating FITS mask: {args.mask}")
+    mask_count = create_fits_mask(filtered_sources, obs_freq, ra_center, dec_center, args.mask, args.imsize, args.cellsize)
+    
+    # Calculate field of view from image parameters
+    fov_arcsec = args.imsize * args.cellsize
+    fov_arcmin = fov_arcsec / 60.0
+    fov_deg = fov_arcmin / 60.0
+    
+    print(f"\nSummary:")
+    print(f"Image size: {args.imsize}x{args.imsize} pixels")
+    print(f"Cell size: {args.cellsize} arcsec/pixel") 
+    print(f"Image FOV: {fov_deg:.2f}° ({fov_arcmin:.1f}' or {fov_arcsec:.0f}\")")
+    print(f"Source types: {', '.join(source_types)}")
+    print(f"Total sources found: {len(filtered_sources)}")
+    print(f"Source list: {source_count} sources -> {args.output}")
+    print(f"FITS mask: {mask_count} masked sources -> {args.mask}")
+    
+    if source_count != len(filtered_sources):
+        print(f"Note: {len(filtered_sources) - mask_count} sources fell outside image boundaries")
+    
+    print("Done!")
+
+if __name__ == "__main__":
+    main()
