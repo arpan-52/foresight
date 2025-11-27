@@ -10,6 +10,7 @@ from .core import (
     filter_sources_in_fov,
     create_wsclean_source_list,
     create_fits_mask,
+    create_flux_image,
     parse_source_types,
 )
 
@@ -55,14 +56,18 @@ Source types:
   U (lower-limit): TGSS detection with no NVSS detection
   I (island): Global values of complex islands
   
+Output types:
+  mask: Binary mask (1=source, 0=background) - position only
+  flux: Flux image (pixel value = flux in Jy at obs frequency) - with spectral index extrapolation
+  
 Examples (MS file mode):
   foresight obs.ms --imsize 4096 --cellsize 1.5
-  foresight obs.ms --imsize 9600 --cellsize 1.0 --source-types S,M,L
+  foresight obs.ms --imsize 9600 --cellsize 1.0 --source-types S,M,L --output-type flux
   foresight obs.ms --imsize 8192 --cellsize 2.0 --source-types all
 
 Examples (Direct coordinates mode):
   foresight --ra 12:34:56.789 --dec -45:30:22.456 --freq 1.4e9 --imsize 4096 --cellsize 1.5
-  foresight --ra 00:00:00.0 --dec +90:00:00.0 --freq 150e6 --imsize 8192 --cellsize 2.0 --source-types S,M,L
+  foresight --ra 00:00:00.0 --dec +90:00:00.0 --freq 150e6 --imsize 8192 --cellsize 2.0 --output-type flux
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -74,8 +79,10 @@ Examples (Direct coordinates mode):
     parser.add_argument("--cellsize", type=float, required=True, help="Cell size in arcseconds")
     parser.add_argument("--source-types", default="S", 
                        help="Comma-separated list of source types to include: S,M,C,L,U,I or single,multiple,complex,upper,lower,island or 'all'")
+    parser.add_argument("--output-type", default="mask", choices=["mask", "flux"],
+                       help="Output type: 'mask' for binary mask (position only) or 'flux' for flux image with spectral index extrapolation (default: mask)")
     parser.add_argument("-o", "--output", default="sources.txt", help="Output source list file")
-    parser.add_argument("-m", "--mask", default="source_mask.fits", help="Output FITS mask file")
+    parser.add_argument("-m", "--mask", default="source_mask.fits", help="Output FITS mask/flux file")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     
     args = parser.parse_args()
@@ -147,8 +154,15 @@ Examples (Direct coordinates mode):
     print(f"Creating WSClean source list: {args.output}")
     source_count = create_wsclean_source_list(filtered_sources, obs_freq, args.output)
     
-    print(f"Creating FITS mask: {args.mask}")
-    mask_count = create_fits_mask(filtered_sources, obs_freq, ra_center, dec_center, args.mask, args.imsize, args.cellsize)
+    # Create FITS output (mask or flux image)
+    if args.output_type == "flux":
+        print(f"Creating FITS flux image: {args.mask}")
+        mask_count = create_flux_image(filtered_sources, obs_freq, ra_center, dec_center, args.mask, args.imsize, args.cellsize)
+        output_description = "flux image"
+    else:
+        print(f"Creating FITS binary mask: {args.mask}")
+        mask_count = create_fits_mask(filtered_sources, obs_freq, ra_center, dec_center, args.mask, args.imsize, args.cellsize)
+        output_description = "binary mask"
     
     # Calculate field of view from image parameters
     fov_arcsec = args.imsize * args.cellsize
@@ -162,7 +176,7 @@ Examples (Direct coordinates mode):
     print(f"Source types: {', '.join(source_types)}")
     print(f"Total sources found: {len(filtered_sources)}")
     print(f"Source list: {source_count} sources -> {args.output}")
-    print(f"FITS mask: {mask_count} masked sources -> {args.mask}")
+    print(f"{output_description.capitalize()}: {mask_count} sources -> {args.mask}")
     
     if source_count != len(filtered_sources):
         print(f"Note: {len(filtered_sources) - mask_count} sources fell outside image boundaries")

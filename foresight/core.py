@@ -269,3 +269,141 @@ def create_fits_mask(filtered_catalog, obs_freq_hz, center_ra, center_dec, outpu
     hdu.writeto(output_file, overwrite=True)
     
     return valid_source_count
+
+
+
+def create_flux_image(filtered_catalog, obs_freq_hz, center_ra, center_dec, output_file, imsize, cellsize_arcsec):
+    """Create a FITS flux image with flux values extrapolated to observation frequency.
+    
+    Uses Total_flux (integrated) and spectral index to extrapolate to obs_freq.
+    Smart frequency selection:
+    - If obs_freq is close to TGSS (150 MHz) but TGSS has no detection, falls back to NVSS
+    - If obs_freq is close to NVSS (1.4 GHz) but NVSS has no detection, falls back to TGSS
+    - If both surveys have no detection, source is SKIPPED (not included)
+    """
+    
+    # Create WCS header
+    header = fits.Header()
+    
+    # Basic image parameters
+    header['SIMPLE'] = True
+    header['BITPIX'] = -32  # 32-bit float
+    header['NAXIS'] = 2
+    header['NAXIS1'] = imsize
+    header['NAXIS2'] = imsize
+    
+    # WCS parameters
+    header['CTYPE1'] = 'RA---SIN'
+    header['CTYPE2'] = 'DEC--SIN'
+    header['CRVAL1'] = center_ra
+    header['CRVAL2'] = center_dec
+    header['CRPIX1'] = imsize // 2 + 1
+    header['CRPIX2'] = imsize // 2 + 1
+    header['CDELT1'] = -cellsize_arcsec / 3600.0
+    header['CDELT2'] = cellsize_arcsec / 3600.0
+    header['CUNIT1'] = 'deg'
+    header['CUNIT2'] = 'deg'
+    
+    # Additional headers
+    header['EQUINOX'] = 2000.0
+    header['RADESYS'] = 'FK5'
+    header['BUNIT'] = 'JY/BEAM'
+    header['BMAJ'] = cellsize_arcsec / 3600.0 * 4
+    header['BMIN'] = cellsize_arcsec / 3600.0 * 4
+    header['BPA'] = 0.0
+    header['RESTFRQ'] = obs_freq_hz
+    header['OBSRA'] = center_ra
+    header['OBSDEC'] = center_dec
+    header['OBSERVER'] = 'WSClean'
+    header['TELESCOP'] = 'GENERIC'
+    header['OBJECT'] = 'FLUX_IMAGE'
+    
+    # Create WCS object
+    wcs = WCS(header)
+    
+    # Initialize flux image (all zeros)
+    flux_data = np.zeros((imsize, imsize), dtype=np.float32)
+    
+    # Convert source positions and place flux values
+    valid_source_count = 0
+    skipped_count = 0
+    
+    for source in filtered_catalog:
+        ra_deg = source['RA']
+        dec_deg = source['DEC']
+        
+        try:
+            px, py = wcs.wcs_world2pix(ra_deg, dec_deg, 1)
+            px = int(round(px - 1))
+            py = int(round(py - 1))
+            
+            # Check if within image bounds
+            if 0 <= px < imsize and 0 <= py < imsize:
+                # Get spectral index
+                spidx = source['Spidx']
+                if not np.isfinite(spidx):
+                    spidx = -0.7  # Default synchrotron spectral index
+                
+                # Determine which flux to use with smart fallback
+                obs_freq_mhz = obs_freq_hz / 1e6
+                
+                # Check which frequency is closer
+                dist_to_tgss = abs(obs_freq_mhz - 150)
+                dist_to_nvss = abs(obs_freq_mhz - 1400)
+                closer_to_tgss = dist_to_tgss < dist_to_nvss
+                
+                # Get flux values (may be invalid/zero)
+                flux_tgss = source['Total_flux_TGSS']
+                flux_nvss = source['Total_flux_NVSS']
+                
+                # Check if fluxes are valid
+                tgss_valid = flux_tgss > 0 and np.isfinite(flux_tgss)
+                nvss_valid = flux_nvss > 0 and np.isfinite(flux_nvss)
+                
+                # Smart selection with fallback
+                ref_freq_hz = None
+                flux_ref = None
+                
+                if closer_to_tgss:
+                    # Obs freq is closer to TGSS (150 MHz)
+                    if tgss_valid:
+                        ref_freq_hz = 150e6
+                        flux_ref = flux_tgss
+                    elif nvss_valid:
+                        # No TGSS but NVSS exists, fall back to NVSS
+                        ref_freq_hz = 1.4e9
+                        flux_ref = flux_nvss
+                else:
+                    # Obs freq is closer to NVSS (1.4 GHz)
+                    if nvss_valid:
+                        ref_freq_hz = 1.4e9
+                        flux_ref = flux_nvss
+                    elif tgss_valid:
+                        # No NVSS but TGSS exists, fall back to TGSS
+                        ref_freq_hz = 150e6
+                        flux_ref = flux_tgss
+                
+                # Only place source if we have valid flux
+                if ref_freq_hz is not None and flux_ref is not None:
+                    # Extrapolate flux to observation frequency: S(ν) = S₀ × (ν/ν₀)^α
+                    flux_at_obs_freq = flux_ref * (obs_freq_hz / ref_freq_hz) ** spidx
+                    
+                    # Place flux at pixel
+                    flux_data[py, px] = flux_at_obs_freq
+                    valid_source_count += 1
+                else:
+                    # No valid detection in either survey, skip this source
+                    skipped_count += 1
+                
+        except Exception as e:
+            print(f"Warning: Could not convert source at RA={ra_deg:.6f}, DEC={dec_deg:.6f} to pixels: {e}")
+            continue
+    
+    # Create and write FITS file
+    hdu = fits.PrimaryHDU(data=flux_data, header=header)
+    hdu.writeto(output_file, overwrite=True)
+    
+    if skipped_count > 0:
+        print(f"Note: Skipped {skipped_count} sources with no valid detections in either survey")
+    
+    return valid_source_count
