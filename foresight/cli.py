@@ -13,6 +13,36 @@ from .core import (
     parse_source_types,
 )
 
+def parse_ra(ra_str):
+    """Parse RA in HH:MM:SS.sss format to decimal degrees."""
+    parts = ra_str.split(':')
+    if len(parts) != 3:
+        raise ValueError(f"RA must be in HH:MM:SS.sss format, got: {ra_str}")
+    hours = float(parts[0])
+    minutes = float(parts[1])
+    seconds = float(parts[2])
+    ra_deg = (hours + minutes/60.0 + seconds/3600.0) * 15.0  # Convert hours to degrees
+    if ra_deg < 0 or ra_deg > 360:
+        raise ValueError(f"RA out of range (0-360°): {ra_deg}")
+    return ra_deg
+
+def parse_dec(dec_str):
+    """Parse DEC in ±DD:MM:SS.sss format to decimal degrees."""
+    is_negative = dec_str.startswith('-')
+    dec_str = dec_str.lstrip('+-')
+    parts = dec_str.split(':')
+    if len(parts) != 3:
+        raise ValueError(f"DEC must be in ±DD:MM:SS.sss format, got: {dec_str}")
+    degrees = float(parts[0])
+    minutes = float(parts[1])
+    seconds = float(parts[2])
+    dec_deg = degrees + minutes/60.0 + seconds/3600.0
+    if is_negative:
+        dec_deg = -dec_deg
+    if dec_deg < -90 or dec_deg > 90:
+        raise ValueError(f"DEC out of range (-90 to +90°): {dec_deg}")
+    return dec_deg
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate WSClean source list and FITS mask from TGSS-NVSS catalog",
@@ -25,14 +55,21 @@ Source types:
   U (lower-limit): TGSS detection with no NVSS detection
   I (island): Global values of complex islands
   
-Examples:
+Examples (MS file mode):
   foresight obs.ms --imsize 4096 --cellsize 1.5
   foresight obs.ms --imsize 9600 --cellsize 1.0 --source-types S,M,L
   foresight obs.ms --imsize 8192 --cellsize 2.0 --source-types all
+
+Examples (Direct coordinates mode):
+  foresight --ra 12:34:56.789 --dec -45:30:22.456 --freq 1.4e9 --imsize 4096 --cellsize 1.5
+  foresight --ra 00:00:00.0 --dec +90:00:00.0 --freq 150e6 --imsize 8192 --cellsize 2.0 --source-types S,M,L
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("ms_file", help="Measurement Set file")
+    parser.add_argument("ms_file", nargs='?', help="Measurement Set file (optional if using --ra --dec --freq)")
+    parser.add_argument("--ra", help="RA in HH:MM:SS.sss format (alternative to MS file)")
+    parser.add_argument("--dec", help="DEC in ±DD:MM:SS.sss format (alternative to MS file)")
+    parser.add_argument("--freq", type=float, help="Observation frequency in Hz (alternative to MS file)")
     parser.add_argument("--imsize", type=int, required=True, help="Image size in pixels (square)")
     parser.add_argument("--cellsize", type=float, required=True, help="Cell size in arcseconds")
     parser.add_argument("--source-types", default="S", 
@@ -42,6 +79,40 @@ Examples:
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     
     args = parser.parse_args()
+    
+    # Determine mode: MS file or direct coordinates
+    if args.ra and args.dec and args.freq:
+        # Direct coordinates mode
+        if args.ms_file:
+            print("Error: Cannot specify both MS file and --ra/--dec/--freq")
+            sys.exit(1)
+        try:
+            ra_center = parse_ra(args.ra)
+            dec_center = parse_dec(args.dec)
+            obs_freq = args.freq
+            print(f"Using direct coordinates:")
+            print(f"Pointing center: RA={ra_center:.6f}°, DEC={dec_center:.6f}°")
+            print(f"Observation frequency: {obs_freq/1e6:.1f} MHz")
+        except ValueError as e:
+            print(f"Error parsing coordinates: {e}")
+            sys.exit(1)
+    elif args.ms_file:
+        # MS file mode
+        if args.ra or args.dec or args.freq:
+            print("Error: Cannot specify both MS file and --ra/--dec/--freq")
+            sys.exit(1)
+        print(f"Reading pointing center and frequency from {args.ms_file}")
+        try:
+            ra_center, dec_center, obs_freq = get_pointing_center_and_frequency(args.ms_file)
+            print(f"Pointing center: RA={ra_center:.6f}°, DEC={dec_center:.6f}°")
+            print(f"Observation frequency: {obs_freq/1e6:.1f} MHz")
+        except Exception as e:
+            print(f"Error reading MS file: {e}")
+            sys.exit(1)
+    else:
+        print("Error: Must provide either MS file or --ra/--dec/--freq arguments")
+        parser.print_help()
+        sys.exit(1)
     
     # Always use bundled catalog - no option to override
     catalog_file = get_catalog_path()
@@ -56,15 +127,6 @@ Examples:
         print("Using all source types: S,M,C,L,U,I")
     else:
         source_types = parse_source_types(args.source_types)
-    
-    print(f"Reading pointing center and frequency from {args.ms_file}")
-    try:
-        ra_center, dec_center, obs_freq = get_pointing_center_and_frequency(args.ms_file)
-        print(f"Pointing center: RA={ra_center:.6f}°, DEC={dec_center:.6f}°")
-        print(f"Observation frequency: {obs_freq/1e6:.1f} MHz")
-    except Exception as e:
-        print(f"Error reading MS file: {e}")
-        sys.exit(1)
     
     print(f"Loading bundled TGSS-NVSS catalog")
     try:

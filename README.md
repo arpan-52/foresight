@@ -1,6 +1,7 @@
 # Foresight
+Foresight is a Psychic-type Pokémon move that allows the user to foresee the near future. I’ve always been a big fan of Noctowl, one of the Pokémon known for using this attack. Inspired by that, the Foresight software now integrates the TGSS and NVSS catalogs—almost like seeing into the future—to predict and identify known source positions.
 
-Radio astronomy source masking from TGSS-NVSS catalog for interferometric imaging.
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/7746d954-fb07-4b23-9ab7-4b6fb43686ef" />
 
 ## Description
 
@@ -14,11 +15,6 @@ Foresight creates WSClean-compatible source lists and FITS masks from the TGSS-N
 ## Installation
 
 ```bash
-pip install foresight
-```
-
-Or install from source:
-```bash
 git clone https://github.com/yourusername/foresight.git
 cd foresight
 pip install -e .
@@ -27,14 +23,10 @@ pip install -e .
 ## Quick Start
 
 ```bash
-# Basic usage
-foresight observation.ms tgss_nvss_catalog.fits --imsize 4096 --cellsize 1.5
-
-# Select specific source types
-foresight observation.ms catalog.fits --imsize 9600 --cellsize 1.0 --source-types S,M,L
-
-# Custom output files
-foresight observation.ms catalog.fits --imsize 8192 --cellsize 2.0 -o my_sources.txt -m my_mask.fits
+# Usage with an MS file 
+foresight observation.ms --imsize 4096 --cellsize 1.5 --source-types S,M,L -o sources.txt -m mask.fits --debug
+# Usage with any custom direction or frequency
+foresight --ra 12:34:56.789 --dec -45:30:22.456 --freq 1.4e9 --imsize 4096 --cellsize 1.5 --source-types S,M,L -o sources.txt -m mask.fits --debug
 ```
 
 ## Source Types
