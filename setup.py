@@ -37,4 +37,7 @@ setup(
         ],
     },
     include_package_data=True,
+    package_data={
+        "foresight": ["data/*.fits"],
+    },
 )
