@@ -66,8 +66,8 @@ Examples (MS file mode):
   foresight obs.ms --imsize 8192 --cellsize 2.0 --source-types all
 
 Examples (Direct coordinates mode):
-  foresight --ra 12:34:56.789 --dec -45:30:22.456 --freq 1.4e9 --imsize 4096 --cellsize 1.5
-  foresight --ra 00:00:00.0 --dec +90:00:00.0 --freq 150e6 --imsize 8192 --cellsize 2.0 --output-type flux
+  foresight --ra 12:34:56.789 --dec=-45:30:22.456 --freq 1.4e9 --imsize 4096 --cellsize 1.5
+  foresight --ra 00:00:00.0 --dec=+90:00:00.0 --freq 150e6 --imsize 8192 --cellsize 2.0 --output-type flux
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
